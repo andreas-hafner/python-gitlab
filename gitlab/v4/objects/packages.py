@@ -11,7 +11,9 @@ from typing import (
     Callable,
     cast,
     Iterator,
+    Literal,
     Optional,
+    overload,
     TYPE_CHECKING,
     Union,
 )
@@ -48,8 +50,8 @@ class GenericPackageManager(RESTManager):
     _from_parent_attrs = {"project_id": "id"}
 
     @cli.register_custom_action(
-        "GenericPackageManager",
-        ("package_name", "package_version", "file_name", "path"),
+        cls_names="GenericPackageManager",
+        required=("package_name", "package_version", "file_name", "path"),
     )
     @exc.on_http_error(exc.GitlabUploadError)
     def upload(
@@ -122,9 +124,51 @@ class GenericPackageManager(RESTManager):
         attrs.update(server_data)
         return self._obj_cls(self, attrs=attrs)
 
+    @overload
+    def download(
+        self,
+        package_name: str,
+        package_version: str,
+        file_name: str,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def download(
+        self,
+        package_name: str,
+        package_version: str,
+        file_name: str,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def download(
+        self,
+        package_name: str,
+        package_version: str,
+        file_name: str,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
     @cli.register_custom_action(
-        "GenericPackageManager",
-        ("package_name", "package_version", "file_name"),
+        cls_names="GenericPackageManager",
+        required=("package_name", "package_version", "file_name"),
     )
     @exc.on_http_error(exc.GitlabGetError)
     def download(

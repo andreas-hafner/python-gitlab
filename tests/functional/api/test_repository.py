@@ -49,6 +49,9 @@ def test_repository_files(project):
     raw_file = project.files.raw(file_path="README.rst", ref="main")
     assert os.fsdecode(raw_file) == "Initial content"
 
+    raw_file = project.files.raw(file_path="README.rst")
+    assert os.fsdecode(raw_file) == "Initial content"
+
 
 def test_repository_tree(project):
     tree = project.repository_tree()

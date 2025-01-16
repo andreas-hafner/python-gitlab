@@ -17,7 +17,7 @@ from gitlab.mixins import (
     SaveMixin,
     UpdateMixin,
 )
-from gitlab.types import RequiredOptional
+from gitlab.types import ArrayAttribute, RequiredOptional
 
 __all__ = [
     "ProjectMergeRequestPipeline",
@@ -60,7 +60,7 @@ class ProjectPipeline(RefreshMixin, ObjectDeleteMixin, RESTObject):
     test_report_summary: "ProjectPipelineTestReportSummaryManager"
     variables: "ProjectPipelineVariableManager"
 
-    @cli.register_custom_action("ProjectPipeline")
+    @cli.register_custom_action(cls_names="ProjectPipeline")
     @exc.on_http_error(exc.GitlabPipelineCancelError)
     def cancel(self, **kwargs: Any) -> Union[Dict[str, Any], requests.Response]:
         """Cancel the job.
@@ -75,7 +75,7 @@ class ProjectPipeline(RefreshMixin, ObjectDeleteMixin, RESTObject):
         path = f"{self.manager.path}/{self.encoded_id}/cancel"
         return self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("ProjectPipeline")
+    @cli.register_custom_action(cls_names="ProjectPipeline")
     @exc.on_http_error(exc.GitlabPipelineRetryError)
     def retry(self, **kwargs: Any) -> Union[Dict[str, Any], requests.Response]:
         """Retry the job.
@@ -139,6 +139,27 @@ class ProjectPipelineManager(RetrieveMixin, CreateMixin, DeleteMixin, RESTManage
             ProjectPipeline, CreateMixin.create(self, data, path=path, **kwargs)
         )
 
+    def latest(self, ref: Optional[str] = None, lazy: bool = False) -> ProjectPipeline:
+        """Get the latest pipeline for the most recent commit
+                            on a specific ref in a project
+
+        Args:
+            ref: The branch or tag to check for the latest pipeline.
+                            Defaults to the default branch when not specified.
+        Returns:
+            A Pipeline instance
+        """
+        data = {}
+        if ref:
+            data = {"ref": ref}
+        if TYPE_CHECKING:
+            assert self._obj_cls is not None
+            assert self.path is not None
+        server_data = self.gitlab.http_get(self.path + "/latest", query_data=data)
+        if TYPE_CHECKING:
+            assert not isinstance(server_data, requests.Response)
+        return self._obj_cls(self, server_data, lazy=lazy)
+
 
 class ProjectPipelineJob(RESTObject):
     pass
@@ -149,6 +170,7 @@ class ProjectPipelineJobManager(ListMixin, RESTManager):
     _obj_cls = ProjectPipelineJob
     _from_parent_attrs = {"project_id": "project_id", "pipeline_id": "id"}
     _list_filters = ("scope", "include_retried")
+    _types = {"scope": ArrayAttribute}
 
 
 class ProjectPipelineBridge(RESTObject):
@@ -200,7 +222,7 @@ class ProjectPipelineSchedule(SaveMixin, ObjectDeleteMixin, RESTObject):
     variables: ProjectPipelineScheduleVariableManager
     pipelines: ProjectPipelineSchedulePipelineManager
 
-    @cli.register_custom_action("ProjectPipelineSchedule")
+    @cli.register_custom_action(cls_names="ProjectPipelineSchedule")
     @exc.on_http_error(exc.GitlabOwnershipError)
     def take_ownership(self, **kwargs: Any) -> None:
         """Update the owner of a pipeline schedule.
@@ -218,7 +240,7 @@ class ProjectPipelineSchedule(SaveMixin, ObjectDeleteMixin, RESTObject):
             assert isinstance(server_data, dict)
         self._update_attrs(server_data)
 
-    @cli.register_custom_action("ProjectPipelineSchedule")
+    @cli.register_custom_action(cls_names="ProjectPipelineSchedule")
     @exc.on_http_error(exc.GitlabPipelinePlayError)
     def play(self, **kwargs: Any) -> Dict[str, Any]:
         """Trigger a new scheduled pipeline, which runs immediately.

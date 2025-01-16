@@ -3,6 +3,7 @@ GitLab API:
 https://docs.gitlab.com/ee/api/projects.html
 """
 
+import io
 from typing import (
     Any,
     Callable,
@@ -10,7 +11,9 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Optional,
+    overload,
     TYPE_CHECKING,
     Union,
 )
@@ -42,6 +45,7 @@ from .badges import ProjectBadgeManager  # noqa: F401
 from .boards import ProjectBoardManager  # noqa: F401
 from .branches import ProjectBranchManager, ProjectProtectedBranchManager  # noqa: F401
 from .ci_lint import ProjectCiLintManager  # noqa: F401
+from .cluster_agents import ProjectClusterAgentManager  # noqa: F401
 from .clusters import ProjectClusterManager  # noqa: F401
 from .commits import ProjectCommitManager  # noqa: F401
 from .container_registry import ProjectRegistryRepositoryManager  # noqa: F401
@@ -74,8 +78,9 @@ from .merge_trains import ProjectMergeTrainManager  # noqa: F401
 from .milestones import ProjectMilestoneManager  # noqa: F401
 from .notes import ProjectNoteManager  # noqa: F401
 from .notification_settings import ProjectNotificationSettingsManager  # noqa: F401
+from .package_protection_rules import ProjectPackageProtectionRuleManager
 from .packages import GenericPackageManager, ProjectPackageManager  # noqa: F401
-from .pages import ProjectPagesDomainManager  # noqa: F401
+from .pages import ProjectPagesDomainManager, ProjectPagesManager  # noqa: F401
 from .pipelines import (  # noqa: F401
     ProjectPipeline,
     ProjectPipelineManager,
@@ -83,6 +88,12 @@ from .pipelines import (  # noqa: F401
 )
 from .project_access_tokens import ProjectAccessTokenManager  # noqa: F401
 from .push_rules import ProjectPushRulesManager  # noqa: F401
+from .registry_protection_repository_rules import (  # noqa: F401
+    ProjectRegistryRepositoryProtectionRuleManager,
+)
+from .registry_protection_rules import (  # noqa: F401; deprecated
+    ProjectRegistryProtectionRuleManager,
+)
 from .releases import ProjectReleaseManager  # noqa: F401
 from .repositories import RepositoryMixin
 from .resource_groups import ProjectResourceGroupManager
@@ -94,6 +105,14 @@ from .statistics import (  # noqa: F401
     ProjectIssuesStatisticsManager,
 )
 from .tags import ProjectProtectedTagManager, ProjectTagManager  # noqa: F401
+from .templates import (  # noqa: F401
+    ProjectDockerfileTemplateManager,
+    ProjectGitignoreTemplateManager,
+    ProjectGitlabciymlTemplateManager,
+    ProjectIssueTemplateManager,
+    ProjectLicenseTemplateManager,
+    ProjectMergeRequestTemplateManager,
+)
 from .triggers import ProjectTriggerManager  # noqa: F401
 from .users import ProjectUserManager  # noqa: F401
 from .variables import ProjectVariableManager  # noqa: F401
@@ -178,36 +197,45 @@ class Project(
     branches: ProjectBranchManager
     ci_lint: ProjectCiLintManager
     clusters: ProjectClusterManager
+    cluster_agents: ProjectClusterAgentManager
     commits: ProjectCommitManager
     customattributes: ProjectCustomAttributeManager
     deployments: ProjectDeploymentManager
     deploytokens: ProjectDeployTokenManager
+    dockerfile_templates: ProjectDockerfileTemplateManager
     environments: ProjectEnvironmentManager
     events: ProjectEventManager
     exports: ProjectExportManager
     files: ProjectFileManager
     forks: "ProjectForkManager"
     generic_packages: GenericPackageManager
+    gitignore_templates: ProjectGitignoreTemplateManager
+    gitlabciyml_templates: ProjectGitlabciymlTemplateManager
     groups: ProjectGroupManager
     hooks: ProjectHookManager
     imports: ProjectImportManager
     integrations: ProjectIntegrationManager
     invitations: ProjectInvitationManager
     issues: ProjectIssueManager
+    issue_templates: ProjectIssueTemplateManager
     issues_statistics: ProjectIssuesStatisticsManager
     iterations: ProjectIterationManager
     jobs: ProjectJobManager
     job_token_scope: ProjectJobTokenScopeManager
     keys: ProjectKeyManager
     labels: ProjectLabelManager
+    license_templates: ProjectLicenseTemplateManager
     members: ProjectMemberManager
     members_all: ProjectMemberAllManager
     mergerequests: ProjectMergeRequestManager
+    merge_request_templates: ProjectMergeRequestTemplateManager
     merge_trains: ProjectMergeTrainManager
     milestones: ProjectMilestoneManager
     notes: ProjectNoteManager
     notificationsettings: ProjectNotificationSettingsManager
     packages: ProjectPackageManager
+    package_protection_rules: ProjectPackageProtectionRuleManager
+    pages: ProjectPagesManager
     pagesdomains: ProjectPagesDomainManager
     pipelines: ProjectPipelineManager
     pipelineschedules: ProjectPipelineScheduleManager
@@ -215,6 +243,8 @@ class Project(
     protectedbranches: ProjectProtectedBranchManager
     protectedtags: ProjectProtectedTagManager
     pushrules: ProjectPushRulesManager
+    registry_protection_rules: ProjectRegistryProtectionRuleManager
+    registry_protection_repository_rules: ProjectRegistryRepositoryProtectionRuleManager
     releases: ProjectReleaseManager
     resource_groups: ProjectResourceGroupManager
     remote_mirrors: "ProjectRemoteMirrorManager"
@@ -230,7 +260,7 @@ class Project(
     variables: ProjectVariableManager
     wikis: ProjectWikiManager
 
-    @cli.register_custom_action("Project", ("forked_from_id",))
+    @cli.register_custom_action(cls_names="Project", required=("forked_from_id",))
     @exc.on_http_error(exc.GitlabCreateError)
     def create_fork_relation(self, forked_from_id: int, **kwargs: Any) -> None:
         """Create a forked from/to relation between existing projects.
@@ -246,7 +276,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/fork/{forked_from_id}"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabDeleteError)
     def delete_fork_relation(self, **kwargs: Any) -> None:
         """Delete a forked relation between existing projects.
@@ -261,7 +291,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/fork"
         self.manager.gitlab.http_delete(path, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabGetError)
     def languages(self, **kwargs: Any) -> Union[Dict[str, Any], requests.Response]:
         """Get languages used in the project with percentage value.
@@ -276,7 +306,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/languages"
         return self.manager.gitlab.http_get(path, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabCreateError)
     def star(self, **kwargs: Any) -> None:
         """Star a project.
@@ -294,7 +324,7 @@ class Project(
             assert isinstance(server_data, dict)
         self._update_attrs(server_data)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabDeleteError)
     def unstar(self, **kwargs: Any) -> None:
         """Unstar a project.
@@ -312,7 +342,7 @@ class Project(
             assert isinstance(server_data, dict)
         self._update_attrs(server_data)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabCreateError)
     def archive(self, **kwargs: Any) -> None:
         """Archive a project.
@@ -330,7 +360,7 @@ class Project(
             assert isinstance(server_data, dict)
         self._update_attrs(server_data)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabDeleteError)
     def unarchive(self, **kwargs: Any) -> None:
         """Unarchive a project.
@@ -349,7 +379,9 @@ class Project(
         self._update_attrs(server_data)
 
     @cli.register_custom_action(
-        "Project", ("group_id", "group_access"), ("expires_at",)
+        cls_names="Project",
+        required=("group_id", "group_access"),
+        optional=("expires_at",),
     )
     @exc.on_http_error(exc.GitlabCreateError)
     def share(
@@ -378,7 +410,7 @@ class Project(
         }
         self.manager.gitlab.http_post(path, post_data=data, **kwargs)
 
-    @cli.register_custom_action("Project", ("group_id",))
+    @cli.register_custom_action(cls_names="Project", required=("group_id",))
     @exc.on_http_error(exc.GitlabDeleteError)
     def unshare(self, group_id: int, **kwargs: Any) -> None:
         """Delete a shared project link within a group.
@@ -395,7 +427,7 @@ class Project(
         self.manager.gitlab.http_delete(path, **kwargs)
 
     # variables not supported in CLI
-    @cli.register_custom_action("Project", ("ref", "token"))
+    @cli.register_custom_action(cls_names="Project", required=("ref", "token"))
     @exc.on_http_error(exc.GitlabCreateError)
     def trigger_pipeline(
         self,
@@ -426,7 +458,7 @@ class Project(
             assert isinstance(attrs, dict)
         return ProjectPipeline(self.pipelines, attrs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabHousekeepingError)
     def housekeeping(self, **kwargs: Any) -> None:
         """Start the housekeeping task.
@@ -442,7 +474,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/housekeeping"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabRestoreError)
     def restore(self, **kwargs: Any) -> None:
         """Restore a project marked for deletion.
@@ -457,7 +489,43 @@ class Project(
         path = f"/projects/{self.encoded_id}/restore"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("Project", optional=("wiki",))
+    @overload
+    def snapshot(
+        self,
+        wiki: bool = False,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def snapshot(
+        self,
+        wiki: bool = False,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def snapshot(
+        self,
+        wiki: bool = False,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    @cli.register_custom_action(cls_names="Project", optional=("wiki",))
     @exc.on_http_error(exc.GitlabGetError)
     def snapshot(
         self,
@@ -500,7 +568,7 @@ class Project(
             result, streamed, action, chunk_size, iterator=iterator
         )
 
-    @cli.register_custom_action("Project", ("scope", "search"))
+    @cli.register_custom_action(cls_names="Project", required=("scope", "search"))
     @exc.on_http_error(exc.GitlabSearchError)
     def search(
         self, scope: str, search: str, **kwargs: Any
@@ -523,7 +591,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/search"
         return self.manager.gitlab.http_list(path, query_data=data, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabCreateError)
     def mirror_pull(self, **kwargs: Any) -> None:
         """Start the pull mirroring process for the project.
@@ -538,7 +606,7 @@ class Project(
         path = f"/projects/{self.encoded_id}/mirror/pull"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("Project")
+    @cli.register_custom_action(cls_names="Project")
     @exc.on_http_error(exc.GitlabGetError)
     def mirror_pull_details(self, **kwargs: Any) -> Dict[str, Any]:
         """Get a project's pull mirror details.
@@ -561,7 +629,7 @@ class Project(
             assert isinstance(result, dict)
         return result
 
-    @cli.register_custom_action("Project", ("to_namespace",))
+    @cli.register_custom_action(cls_names="Project", required=("to_namespace",))
     @exc.on_http_error(exc.GitlabTransferProjectError)
     def transfer(self, to_namespace: Union[int, str], **kwargs: Any) -> None:
         """Transfer a project to the given namespace ID
@@ -786,7 +854,7 @@ class ProjectManager(CRUDMixin, RESTManager):
     @exc.on_http_error(exc.GitlabImportError)
     def import_project(
         self,
-        file: str,
+        file: io.BufferedReader,
         path: str,
         name: Optional[str] = None,
         namespace: Optional[str] = None,

@@ -1,4 +1,15 @@
-from typing import Any, Callable, cast, Dict, Iterator, Optional, TYPE_CHECKING, Union
+from typing import (
+    Any,
+    Callable,
+    cast,
+    Dict,
+    Iterator,
+    Literal,
+    Optional,
+    overload,
+    TYPE_CHECKING,
+    Union,
+)
 
 import requests
 
@@ -16,7 +27,7 @@ __all__ = [
 
 
 class ProjectJob(RefreshMixin, RESTObject):
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabJobCancelError)
     def cancel(self, **kwargs: Any) -> Dict[str, Any]:
         """Cancel the job.
@@ -34,7 +45,7 @@ class ProjectJob(RefreshMixin, RESTObject):
             assert isinstance(result, dict)
         return result
 
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabJobRetryError)
     def retry(self, **kwargs: Any) -> Dict[str, Any]:
         """Retry the job.
@@ -52,7 +63,7 @@ class ProjectJob(RefreshMixin, RESTObject):
             assert isinstance(result, dict)
         return result
 
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabJobPlayError)
     def play(self, **kwargs: Any) -> None:
         """Trigger a job explicitly.
@@ -70,7 +81,7 @@ class ProjectJob(RefreshMixin, RESTObject):
             assert isinstance(result, dict)
         self._update_attrs(result)
 
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabJobEraseError)
     def erase(self, **kwargs: Any) -> None:
         """Erase the job (remove job artifacts and trace).
@@ -85,7 +96,7 @@ class ProjectJob(RefreshMixin, RESTObject):
         path = f"{self.manager.path}/{self.encoded_id}/erase"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabCreateError)
     def keep_artifacts(self, **kwargs: Any) -> None:
         """Prevent artifacts from being deleted when expiration is set.
@@ -100,7 +111,7 @@ class ProjectJob(RefreshMixin, RESTObject):
         path = f"{self.manager.path}/{self.encoded_id}/artifacts/keep"
         self.manager.gitlab.http_post(path, **kwargs)
 
-    @cli.register_custom_action("ProjectJob")
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabCreateError)
     def delete_artifacts(self, **kwargs: Any) -> None:
         """Delete artifacts of a job.
@@ -115,7 +126,40 @@ class ProjectJob(RefreshMixin, RESTObject):
         path = f"{self.manager.path}/{self.encoded_id}/artifacts"
         self.manager.gitlab.http_delete(path, **kwargs)
 
-    @cli.register_custom_action("ProjectJob")
+    @overload
+    def artifacts(
+        self,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def artifacts(
+        self,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def artifacts(
+        self,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabGetError)
     def artifacts(
         self,
@@ -156,7 +200,43 @@ class ProjectJob(RefreshMixin, RESTObject):
             result, streamed, action, chunk_size, iterator=iterator
         )
 
-    @cli.register_custom_action("ProjectJob")
+    @overload
+    def artifact(
+        self,
+        path: str,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def artifact(
+        self,
+        path: str,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def artifact(
+        self,
+        path: str,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabGetError)
     def artifact(
         self,
@@ -199,7 +279,40 @@ class ProjectJob(RefreshMixin, RESTObject):
             result, streamed, action, chunk_size, iterator=iterator
         )
 
-    @cli.register_custom_action("ProjectJob")
+    @overload
+    def trace(
+        self,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def trace(
+        self,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def trace(
+        self,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    @cli.register_custom_action(cls_names="ProjectJob")
     @exc.on_http_error(exc.GitlabGetError)
     def trace(
         self,
@@ -209,7 +322,7 @@ class ProjectJob(RefreshMixin, RESTObject):
         *,
         iterator: bool = False,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Union[bytes, Iterator[Any]]]:
         """Get the job trace.
 
         Args:
@@ -236,12 +349,9 @@ class ProjectJob(RefreshMixin, RESTObject):
         )
         if TYPE_CHECKING:
             assert isinstance(result, requests.Response)
-        return_value = utils.response_content(
+        return utils.response_content(
             result, streamed, action, chunk_size, iterator=iterator
         )
-        if TYPE_CHECKING:
-            assert isinstance(return_value, dict)
-        return return_value
 
 
 class ProjectJobManager(RetrieveMixin, RESTManager):

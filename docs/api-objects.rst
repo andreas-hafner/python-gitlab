@@ -14,6 +14,7 @@ API examples
    gl_objects/bulk_imports
    gl_objects/messages
    gl_objects/ci_lint
+   gl_objects/cluster_agents
    gl_objects/commits
    gl_objects/deploy_keys
    gl_objects/deploy_tokens
@@ -48,7 +49,9 @@ API examples
    gl_objects/projects
    gl_objects/project_access_tokens
    gl_objects/protected_branches
+   gl_objects/protected_container_repositories
    gl_objects/protected_environments
+   gl_objects/protected_packages
    gl_objects/releases
    gl_objects/runners
    gl_objects/remote_mirrors

@@ -6,7 +6,9 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Optional,
+    overload,
     Tuple,
     Type,
     TYPE_CHECKING,
@@ -550,7 +552,7 @@ class UserAgentDetailMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    @cli.register_custom_action(("Snippet", "ProjectSnippet", "ProjectIssue"))
+    @cli.register_custom_action(cls_names=("Snippet", "ProjectSnippet", "ProjectIssue"))
     @exc.on_http_error(exc.GitlabGetError)
     def user_agent_detail(self, **kwargs: Any) -> Dict[str, Any]:
         """Get the user agent detail.
@@ -578,7 +580,8 @@ class AccessRequestMixin(_RestObjectBase):
     manager: base.RESTManager
 
     @cli.register_custom_action(
-        ("ProjectAccessRequest", "GroupAccessRequest"), (), ("access_level",)
+        cls_names=("ProjectAccessRequest", "GroupAccessRequest"),
+        optional=("access_level",),
     )
     @exc.on_http_error(exc.GitlabUpdateError)
     def approve(
@@ -611,7 +614,40 @@ class DownloadMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    @cli.register_custom_action(("GroupExport", "ProjectExport"))
+    @overload
+    def download(
+        self,
+        streamed: Literal[False] = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    def download(
+        self,
+        streamed: bool = False,
+        action: None = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[True] = True,
+        **kwargs: Any,
+    ) -> Iterator[Any]: ...
+
+    @overload
+    def download(
+        self,
+        streamed: Literal[True] = True,
+        action: Optional[Callable[[bytes], None]] = None,
+        chunk_size: int = 1024,
+        *,
+        iterator: Literal[False] = False,
+        **kwargs: Any,
+    ) -> None: ...
+
+    @cli.register_custom_action(cls_names=("GroupExport", "ProjectExport"))
     @exc.on_http_error(exc.GitlabGetError)
     def download(
         self,
@@ -662,6 +698,14 @@ class RotateMixin(_RestManagerBase):
     _path: Optional[str]
     gitlab: gitlab.Gitlab
 
+    @cli.register_custom_action(
+        cls_names=(
+            "PersonalAccessTokenManager",
+            "GroupAccessTokenManager",
+            "ProjectAccessTokenManager",
+        ),
+        optional=("expires_at",),
+    )
     @exc.on_http_error(exc.GitlabRotateError)
     def rotate(
         self, id: Union[str, int], expires_at: Optional[str] = None, **kwargs: Any
@@ -695,7 +739,12 @@ class ObjectRotateMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    def rotate(self, **kwargs: Any) -> None:
+    @cli.register_custom_action(
+        cls_names=("PersonalAccessToken", "GroupAccessToken", "ProjectAccessToken"),
+        optional=("expires_at",),
+    )
+    @exc.on_http_error(exc.GitlabRotateError)
+    def rotate(self, **kwargs: Any) -> Dict[str, Any]:
         """Rotate the current access token object.
 
         Args:
@@ -710,6 +759,7 @@ class ObjectRotateMixin(_RestObjectBase):
             assert self.encoded_id is not None
         server_data = self.manager.rotate(self.encoded_id, **kwargs)
         self._update_attrs(server_data)
+        return server_data
 
 
 class SubscribableMixin(_RestObjectBase):
@@ -721,7 +771,7 @@ class SubscribableMixin(_RestObjectBase):
     manager: base.RESTManager
 
     @cli.register_custom_action(
-        ("ProjectIssue", "ProjectMergeRequest", "ProjectLabel", "GroupLabel")
+        cls_names=("ProjectIssue", "ProjectMergeRequest", "ProjectLabel", "GroupLabel")
     )
     @exc.on_http_error(exc.GitlabSubscribeError)
     def subscribe(self, **kwargs: Any) -> None:
@@ -741,7 +791,7 @@ class SubscribableMixin(_RestObjectBase):
         self._update_attrs(server_data)
 
     @cli.register_custom_action(
-        ("ProjectIssue", "ProjectMergeRequest", "ProjectLabel", "GroupLabel")
+        cls_names=("ProjectIssue", "ProjectMergeRequest", "ProjectLabel", "GroupLabel")
     )
     @exc.on_http_error(exc.GitlabUnsubscribeError)
     def unsubscribe(self, **kwargs: Any) -> None:
@@ -769,7 +819,7 @@ class TodoMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"))
+    @cli.register_custom_action(cls_names=("ProjectIssue", "ProjectMergeRequest"))
     @exc.on_http_error(exc.GitlabTodoError)
     def todo(self, **kwargs: Any) -> None:
         """Create a todo associated to the object.
@@ -793,7 +843,7 @@ class TimeTrackingMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"))
+    @cli.register_custom_action(cls_names=("ProjectIssue", "ProjectMergeRequest"))
     @exc.on_http_error(exc.GitlabTimeTrackingError)
     def time_stats(self, **kwargs: Any) -> Dict[str, Any]:
         """Get time stats for the object.
@@ -819,7 +869,9 @@ class TimeTrackingMixin(_RestObjectBase):
             assert not isinstance(result, requests.Response)
         return result
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"), ("duration",))
+    @cli.register_custom_action(
+        cls_names=("ProjectIssue", "ProjectMergeRequest"), required=("duration",)
+    )
     @exc.on_http_error(exc.GitlabTimeTrackingError)
     def time_estimate(self, duration: str, **kwargs: Any) -> Dict[str, Any]:
         """Set an estimated time of work for the object.
@@ -839,7 +891,7 @@ class TimeTrackingMixin(_RestObjectBase):
             assert not isinstance(result, requests.Response)
         return result
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"))
+    @cli.register_custom_action(cls_names=("ProjectIssue", "ProjectMergeRequest"))
     @exc.on_http_error(exc.GitlabTimeTrackingError)
     def reset_time_estimate(self, **kwargs: Any) -> Dict[str, Any]:
         """Resets estimated time for the object to 0 seconds.
@@ -857,7 +909,9 @@ class TimeTrackingMixin(_RestObjectBase):
             assert not isinstance(result, requests.Response)
         return result
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"), ("duration",))
+    @cli.register_custom_action(
+        cls_names=("ProjectIssue", "ProjectMergeRequest"), required=("duration",)
+    )
     @exc.on_http_error(exc.GitlabTimeTrackingError)
     def add_spent_time(self, duration: str, **kwargs: Any) -> Dict[str, Any]:
         """Add time spent working on the object.
@@ -877,7 +931,7 @@ class TimeTrackingMixin(_RestObjectBase):
             assert not isinstance(result, requests.Response)
         return result
 
-    @cli.register_custom_action(("ProjectIssue", "ProjectMergeRequest"))
+    @cli.register_custom_action(cls_names=("ProjectIssue", "ProjectMergeRequest"))
     @exc.on_http_error(exc.GitlabTimeTrackingError)
     def reset_spent_time(self, **kwargs: Any) -> Dict[str, Any]:
         """Resets the time spent working on the object.
@@ -904,9 +958,11 @@ class ParticipantsMixin(_RestObjectBase):
     _updated_attrs: Dict[str, Any]
     manager: base.RESTManager
 
-    @cli.register_custom_action(("ProjectMergeRequest", "ProjectIssue"))
+    @cli.register_custom_action(cls_names=("ProjectMergeRequest", "ProjectIssue"))
     @exc.on_http_error(exc.GitlabListError)
-    def participants(self, **kwargs: Any) -> Dict[str, Any]:
+    def participants(
+        self, **kwargs: Any
+    ) -> Union[gitlab.client.GitlabList, List[Dict[str, Any]]]:
         """List the participants.
 
         Args:
@@ -924,7 +980,7 @@ class ParticipantsMixin(_RestObjectBase):
         """
 
         path = f"{self.manager.path}/{self.encoded_id}/participants"
-        result = self.manager.gitlab.http_get(path, **kwargs)
+        result = self.manager.gitlab.http_list(path, **kwargs)
         if TYPE_CHECKING:
             assert not isinstance(result, requests.Response)
         return result
@@ -932,7 +988,8 @@ class ParticipantsMixin(_RestObjectBase):
 
 class BadgeRenderMixin(_RestManagerBase):
     @cli.register_custom_action(
-        ("GroupBadgeManager", "ProjectBadgeManager"), ("link_url", "image_url")
+        cls_names=("GroupBadgeManager", "ProjectBadgeManager"),
+        required=("link_url", "image_url"),
     )
     @exc.on_http_error(exc.GitlabRenderError)
     def render(self, link_url: str, image_url: str, **kwargs: Any) -> Dict[str, Any]:
@@ -1025,7 +1082,9 @@ class UploadMixin(_RestObjectBase):
         data = self.attributes
         return self._upload_path.format(**data)
 
-    @cli.register_custom_action(("Project", "ProjectWiki"), ("filename", "filepath"))
+    @cli.register_custom_action(
+        cls_names=("Project", "ProjectWiki"), required=("filename", "filepath")
+    )
     @exc.on_http_error(exc.GitlabUploadError)
     def upload(
         self,

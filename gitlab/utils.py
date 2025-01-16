@@ -1,14 +1,27 @@
+import dataclasses
 import email.message
 import logging
 import pathlib
+import time
 import traceback
 import urllib.parse
 import warnings
-from typing import Any, Callable, Dict, Iterator, Literal, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    Literal,
+    MutableMapping,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+)
 
 import requests
 
-from gitlab import types
+from gitlab import const, types
 
 
 class _StdoutStream:
@@ -16,9 +29,22 @@ class _StdoutStream:
         print(chunk)
 
 
+def get_base_url(url: Optional[str] = None) -> str:
+    """Return the base URL with the trailing slash stripped.
+    If the URL is a Falsy value, return the default URL.
+    Returns:
+        The base URL
+    """
+    if not url:
+        return const.DEFAULT_URL
+
+    return url.rstrip("/")
+
+
 def get_content_type(content_type: Optional[str]) -> str:
     message = email.message.Message()
-    message["content-type"] = content_type
+    if content_type is not None:
+        message["content-type"] = content_type
 
     return message.get_content_type()
 
@@ -69,6 +95,71 @@ def response_content(
         if chunk:
             action(chunk)
     return None
+
+
+class Retry:
+    def __init__(
+        self,
+        max_retries: int,
+        obey_rate_limit: Optional[bool] = True,
+        retry_transient_errors: Optional[bool] = False,
+    ) -> None:
+        self.cur_retries = 0
+        self.max_retries = max_retries
+        self.obey_rate_limit = obey_rate_limit
+        self.retry_transient_errors = retry_transient_errors
+
+    def _retryable_status_code(
+        self, status_code: Optional[int], reason: str = ""
+    ) -> bool:
+        if status_code == 429 and self.obey_rate_limit:
+            return True
+
+        if not self.retry_transient_errors:
+            return False
+        if status_code in const.RETRYABLE_TRANSIENT_ERROR_CODES:
+            return True
+        if status_code == 409 and "Resource lock" in reason:
+            return True
+
+        return False
+
+    def handle_retry_on_status(
+        self,
+        status_code: Optional[int],
+        headers: Optional[MutableMapping[str, str]] = None,
+        reason: str = "",
+    ) -> bool:
+        if not self._retryable_status_code(status_code, reason):
+            return False
+
+        if headers is None:
+            headers = {}
+
+        # Response headers documentation:
+        # https://docs.gitlab.com/ee/user/admin_area/settings/user_and_ip_rate_limits.html#response-headers
+        if self.max_retries == -1 or self.cur_retries < self.max_retries:
+            wait_time = 2**self.cur_retries * 0.1
+            if "Retry-After" in headers:
+                wait_time = int(headers["Retry-After"])
+            elif "RateLimit-Reset" in headers:
+                wait_time = int(headers["RateLimit-Reset"]) - time.time()
+            self.cur_retries += 1
+            time.sleep(wait_time)
+            return True
+
+        return False
+
+    def handle_retry(self) -> bool:
+        if self.retry_transient_errors and (
+            self.max_retries == -1 or self.cur_retries < self.max_retries
+        ):
+            wait_time = 2**self.cur_retries * 0.1
+            self.cur_retries += 1
+            time.sleep(wait_time)
+            return True
+
+        return False
 
 
 def _transform_types(
@@ -176,6 +267,7 @@ def warn(
     *,
     category: Optional[Type[Warning]] = None,
     source: Optional[Any] = None,
+    show_caller: bool = True,
 ) -> None:
     """This `warnings.warn` wrapper function attempts to show the location causing the
     warning in the user code that called the library.
@@ -195,9 +287,17 @@ def warn(
         frame_dir = str(pathlib.Path(frame.filename).parent.resolve())
         if not frame_dir.startswith(str(pg_dir)):
             break
+    if show_caller:
+        message += warning_from
     warnings.warn(
-        message=message + warning_from,
+        message=message,
         category=category,
         stacklevel=stacklevel,
         source=source,
     )
+
+
+@dataclasses.dataclass
+class WarnMessageData:
+    message: str
+    show_caller: bool

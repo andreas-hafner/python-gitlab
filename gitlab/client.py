@@ -1,8 +1,9 @@
 """Wrapper for the GitLab API."""
 
+from __future__ import annotations
+
 import os
 import re
-import time
 from typing import (
     Any,
     BinaryIO,
@@ -24,6 +25,19 @@ import gitlab.config
 import gitlab.const
 import gitlab.exceptions
 from gitlab import _backends, utils
+
+try:
+    import gql
+    import gql.transport.exceptions
+    import graphql
+    import httpx
+
+    from ._backends.graphql import GitlabAsyncTransport, GitlabTransport
+
+    _GQL_INSTALLED = True
+except ImportError:  # pragma: no cover
+    _GQL_INSTALLED = False
+
 
 REDIRECT_MSG = (
     "python-gitlab detected a {status_code} ({reason!r}) redirection. You must update "
@@ -89,7 +103,7 @@ class Gitlab:
         self._api_version = str(api_version)
         self._server_version: Optional[str] = None
         self._server_revision: Optional[str] = None
-        self._base_url = self._get_base_url(url)
+        self._base_url = utils.get_base_url(url)
         self._url = f"{self._base_url}/api/v{api_version}"
         #: Timeout to use for requests to gitlab server
         self.timeout = timeout
@@ -289,6 +303,7 @@ class Gitlab:
             order_by=config.order_by,
             user_agent=config.user_agent,
             retry_transient_errors=config.retry_transient_errors,
+            keep_base_url=config.keep_base_url,
             **kwargs,
         )
 
@@ -557,18 +572,6 @@ class Gitlab:
             "verify": self.ssl_verify,
         }
 
-    @staticmethod
-    def _get_base_url(url: Optional[str] = None) -> str:
-        """Return the base URL with the trailing slash stripped.
-        If the URL is a Falsy value, return the default URL.
-        Returns:
-            The base URL
-        """
-        if not url:
-            return gitlab.const.DEFAULT_URL
-
-        return url.rstrip("/")
-
     def _build_url(self, path: str) -> str:
         """Returns the full url from path.
 
@@ -625,8 +628,8 @@ class Gitlab:
         for item in result.history:
             if item.status_code not in (301, 302):
                 continue
-            # GET methods can be redirected without issue
-            if item.request.method == "GET":
+            # GET and HEAD methods can be redirected without issue
+            if item.request.method in ("GET", "HEAD"):
                 continue
             target = item.headers.get("location")
             raise gitlab.exceptions.RedirectError(
@@ -718,7 +721,12 @@ class Gitlab:
         send_data = self._backend.prepare_send_data(files, post_data, raw)
         opts["headers"]["Content-type"] = send_data.content_type
 
-        cur_retries = 0
+        retry = utils.Retry(
+            max_retries=max_retries,
+            obey_rate_limit=obey_rate_limit,
+            retry_transient_errors=retry_transient_errors,
+        )
+
         while True:
             try:
                 result = self._backend.http_request(
@@ -733,14 +741,8 @@ class Gitlab:
                     **opts,
                 )
             except (requests.ConnectionError, requests.exceptions.ChunkedEncodingError):
-                if retry_transient_errors and (
-                    max_retries == -1 or cur_retries < max_retries
-                ):
-                    wait_time = 2**cur_retries * 0.1
-                    cur_retries += 1
-                    time.sleep(wait_time)
+                if retry.handle_retry():
                     continue
-
                 raise
 
             self._check_redirects(result.response)
@@ -748,31 +750,10 @@ class Gitlab:
             if 200 <= result.status_code < 300:
                 return result.response
 
-            def should_retry() -> bool:
-                if result.status_code == 429 and obey_rate_limit:
-                    return True
-
-                if not retry_transient_errors:
-                    return False
-                if result.status_code in gitlab.const.RETRYABLE_TRANSIENT_ERROR_CODES:
-                    return True
-                if result.status_code == 409 and "Resource lock" in result.reason:
-                    return True
-
-                return False
-
-            if should_retry():
-                # Response headers documentation:
-                # https://docs.gitlab.com/ee/user/admin_area/settings/user_and_ip_rate_limits.html#response-headers
-                if max_retries == -1 or cur_retries < max_retries:
-                    wait_time = 2**cur_retries * 0.1
-                    if "Retry-After" in result.headers:
-                        wait_time = int(result.headers["Retry-After"])
-                    elif "RateLimit-Reset" in result.headers:
-                        wait_time = int(result.headers["RateLimit-Reset"]) - time.time()
-                    cur_retries += 1
-                    time.sleep(wait_time)
-                    continue
+            if retry.handle_retry_on_status(
+                result.status_code, result.headers, result.reason
+            ):
+                continue
 
             error_message = result.content
             try:
@@ -869,6 +850,7 @@ class Gitlab:
         query_data: Optional[Dict[str, Any]] = None,
         *,
         iterator: Optional[bool] = None,
+        message_details: Optional[utils.WarnMessageData] = None,
         **kwargs: Any,
     ) -> Union["GitlabList", List[Dict[str, Any]]]:
         """Make a GET request to the Gitlab server for list-oriented queries.
@@ -952,16 +934,29 @@ class Gitlab:
         # Warn the user that they are only going to retrieve `per_page`
         # maximum items. This is a common cause of issues filed.
         total_items = "many" if gl_list.total is None else gl_list.total
-        utils.warn(
-            message=(
+        if message_details is not None:
+            message = message_details.message.format_map(
+                {
+                    "len_items": len(items),
+                    "per_page": gl_list.per_page,
+                    "total_items": total_items,
+                }
+            )
+            show_caller = message_details.show_caller
+        else:
+            message = (
                 f"Calling a `list()` method without specifying `get_all=True` or "
                 f"`iterator=True` will return a maximum of {gl_list.per_page} items. "
                 f"Your query returned {len(items)} of {total_items} items. See "
                 f"{_PAGINATION_URL} for more details. If this was done intentionally, "
                 f"then this warning can be supressed by adding the argument "
                 f"`get_all=False` to the `list()` call."
-            ),
+            )
+            show_caller = True
+        utils.warn(
+            message=message,
             category=UserWarning,
+            show_caller=show_caller,
         )
         return items
 
@@ -1282,3 +1277,198 @@ class GitlabList:
             return self.next()
 
         raise StopIteration
+
+
+class _BaseGraphQL:
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        *,
+        token: Optional[str] = None,
+        ssl_verify: Union[bool, str] = True,
+        timeout: Optional[float] = None,
+        user_agent: str = gitlab.const.USER_AGENT,
+        fetch_schema_from_transport: bool = False,
+        max_retries: int = 10,
+        obey_rate_limit: bool = True,
+        retry_transient_errors: bool = False,
+    ) -> None:
+        if not _GQL_INSTALLED:
+            raise ImportError(
+                "The GraphQL client could not be initialized because "
+                "the gql dependencies are not installed. "
+                "Install them with 'pip install python-gitlab[graphql]'"
+            )
+        self._base_url = utils.get_base_url(url)
+        self._timeout = timeout
+        self._token = token
+        self._url = f"{self._base_url}/api/graphql"
+        self._user_agent = user_agent
+        self._ssl_verify = ssl_verify
+        self._max_retries = max_retries
+        self._obey_rate_limit = obey_rate_limit
+        self._retry_transient_errors = retry_transient_errors
+        self._client_opts = self._get_client_opts()
+        self._fetch_schema_from_transport = fetch_schema_from_transport
+
+    def _get_client_opts(self) -> Dict[str, Any]:
+        headers = {"User-Agent": self._user_agent}
+
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+
+        return {
+            "headers": headers,
+            "timeout": self._timeout,
+            "verify": self._ssl_verify,
+        }
+
+
+class GraphQL(_BaseGraphQL):
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        *,
+        token: Optional[str] = None,
+        ssl_verify: Union[bool, str] = True,
+        client: Optional[httpx.Client] = None,
+        timeout: Optional[float] = None,
+        user_agent: str = gitlab.const.USER_AGENT,
+        fetch_schema_from_transport: bool = False,
+        max_retries: int = 10,
+        obey_rate_limit: bool = True,
+        retry_transient_errors: bool = False,
+    ) -> None:
+        super().__init__(
+            url=url,
+            token=token,
+            ssl_verify=ssl_verify,
+            timeout=timeout,
+            user_agent=user_agent,
+            fetch_schema_from_transport=fetch_schema_from_transport,
+            max_retries=max_retries,
+            obey_rate_limit=obey_rate_limit,
+            retry_transient_errors=retry_transient_errors,
+        )
+
+        self._http_client = client or httpx.Client(**self._client_opts)
+        self._transport = GitlabTransport(self._url, client=self._http_client)
+        self._client = gql.Client(
+            transport=self._transport,
+            fetch_schema_from_transport=fetch_schema_from_transport,
+        )
+        self._gql = gql.gql
+
+    def __enter__(self) -> "GraphQL":
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._http_client.close()
+
+    def execute(
+        self, request: Union[str, graphql.Source], *args: Any, **kwargs: Any
+    ) -> Any:
+        parsed_document = self._gql(request)
+        retry = utils.Retry(
+            max_retries=self._max_retries,
+            obey_rate_limit=self._obey_rate_limit,
+            retry_transient_errors=self._retry_transient_errors,
+        )
+
+        while True:
+            try:
+                result = self._client.execute(parsed_document, *args, **kwargs)
+            except gql.transport.exceptions.TransportServerError as e:
+                if retry.handle_retry_on_status(
+                    status_code=e.code, headers=self._transport.response_headers
+                ):
+                    continue
+
+                if e.code == 401:
+                    raise gitlab.exceptions.GitlabAuthenticationError(
+                        response_code=e.code,
+                        error_message=str(e),
+                    )
+
+                raise gitlab.exceptions.GitlabHttpError(
+                    response_code=e.code,
+                    error_message=str(e),
+                )
+
+            return result
+
+
+class AsyncGraphQL(_BaseGraphQL):
+    def __init__(
+        self,
+        url: Optional[str] = None,
+        *,
+        token: Optional[str] = None,
+        ssl_verify: Union[bool, str] = True,
+        client: Optional[httpx.AsyncClient] = None,
+        timeout: Optional[float] = None,
+        user_agent: str = gitlab.const.USER_AGENT,
+        fetch_schema_from_transport: bool = False,
+        max_retries: int = 10,
+        obey_rate_limit: bool = True,
+        retry_transient_errors: bool = False,
+    ) -> None:
+        super().__init__(
+            url=url,
+            token=token,
+            ssl_verify=ssl_verify,
+            timeout=timeout,
+            user_agent=user_agent,
+            fetch_schema_from_transport=fetch_schema_from_transport,
+            max_retries=max_retries,
+            obey_rate_limit=obey_rate_limit,
+            retry_transient_errors=retry_transient_errors,
+        )
+
+        self._http_client = client or httpx.AsyncClient(**self._client_opts)
+        self._transport = GitlabAsyncTransport(self._url, client=self._http_client)
+        self._client = gql.Client(
+            transport=self._transport,
+            fetch_schema_from_transport=fetch_schema_from_transport,
+        )
+        self._gql = gql.gql
+
+    async def __aenter__(self) -> "AsyncGraphQL":
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self._http_client.aclose()
+
+    async def execute(
+        self, request: Union[str, graphql.Source], *args: Any, **kwargs: Any
+    ) -> Any:
+        parsed_document = self._gql(request)
+        retry = utils.Retry(
+            max_retries=self._max_retries,
+            obey_rate_limit=self._obey_rate_limit,
+            retry_transient_errors=self._retry_transient_errors,
+        )
+
+        while True:
+            try:
+                result = await self._client.execute_async(
+                    parsed_document, *args, **kwargs
+                )
+            except gql.transport.exceptions.TransportServerError as e:
+                if retry.handle_retry_on_status(
+                    status_code=e.code, headers=self._transport.response_headers
+                ):
+                    continue
+
+                if e.code == 401:
+                    raise gitlab.exceptions.GitlabAuthenticationError(
+                        response_code=e.code,
+                        error_message=str(e),
+                    )
+
+                raise gitlab.exceptions.GitlabHttpError(
+                    response_code=e.code,
+                    error_message=str(e),
+                )
+
+            return result

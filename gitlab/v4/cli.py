@@ -1,4 +1,5 @@
 import argparse
+import json
 import operator
 import sys
 from typing import Any, Dict, List, Optional, Type, TYPE_CHECKING, Union
@@ -82,7 +83,7 @@ class GitlabCLI:
 
     def do_custom(self) -> Any:
         class_instance: Union[gitlab.base.RESTManager, gitlab.base.RESTObject]
-        in_obj = cli.custom_actions[self.cls_name][self.resource_action][2]
+        in_obj = cli.custom_actions[self.cls_name][self.resource_action].in_object
 
         # Get the object (lazy), then act
         if in_obj:
@@ -140,8 +141,16 @@ class GitlabCLI:
     ) -> Union[gitlab.base.RESTObjectList, List[gitlab.base.RESTObject]]:
         if TYPE_CHECKING:
             assert isinstance(self.mgr, gitlab.mixins.ListMixin)
+        message_details = gitlab.utils.WarnMessageData(
+            message=(
+                "Your query returned {len_items} of {total_items} items. To return all "
+                "items use `--get-all`. To silence this warning use `--no-get-all`."
+            ),
+            show_caller=False,
+        )
+
         try:
-            result = self.mgr.list(**self.args)
+            result = self.mgr.list(**self.args, message_details=message_details)
         except Exception as e:  # pragma: no cover, cli.die is unit-tested
             cli.die("Impossible to list objects", e)
         return result
@@ -207,12 +216,20 @@ def _populate_sub_parser_by_class(
     mgr_cls = getattr(gitlab.v4.objects, mgr_cls_name)
 
     action_parsers: Dict[str, argparse.ArgumentParser] = {}
-    for action_name in ["list", "get", "create", "update", "delete"]:
+    for action_name, help_text in [
+        ("list", "List the GitLab resources"),
+        ("get", "Get a GitLab resource"),
+        ("create", "Create a GitLab resource"),
+        ("update", "Update a GitLab resource"),
+        ("delete", "Delete a GitLab resource"),
+    ]:
         if not hasattr(mgr_cls, action_name):
             continue
 
         sub_parser_action = sub_parser.add_parser(
-            action_name, conflict_handler="resolve"
+            action_name,
+            conflict_handler="resolve",
+            help=help_text,
         )
         action_parsers[action_name] = sub_parser_action
         sub_parser_action.add_argument("--sudo", required=False)
@@ -230,11 +247,24 @@ def _populate_sub_parser_by_class(
 
             sub_parser_action.add_argument("--page", required=False, type=int)
             sub_parser_action.add_argument("--per-page", required=False, type=int)
-            sub_parser_action.add_argument(
+            get_all_group = sub_parser_action.add_mutually_exclusive_group()
+            get_all_group.add_argument(
                 "--get-all",
                 required=False,
-                action="store_true",
+                action="store_const",
+                const=True,
+                default=None,
+                dest="get_all",
                 help="Return all items from the server, without pagination.",
+            )
+            get_all_group.add_argument(
+                "--no-get-all",
+                required=False,
+                action="store_const",
+                const=False,
+                default=None,
+                dest="get_all",
+                help="Don't return all items from the server.",
             )
 
         if action_name == "delete":
@@ -292,11 +322,14 @@ def _populate_sub_parser_by_class(
     if cls.__name__ in cli.custom_actions:
         name = cls.__name__
         for action_name in cli.custom_actions[name]:
+            custom_action = cli.custom_actions[name][action_name]
             # NOTE(jlvillal): If we put a function for the `default` value of
             # the `get` it will always get called, which will break things.
             action_parser = action_parsers.get(action_name)
             if action_parser is None:
-                sub_parser_action = sub_parser.add_parser(action_name)
+                sub_parser_action = sub_parser.add_parser(
+                    action_name, help=custom_action.help
+                )
             else:
                 sub_parser_action = action_parser
             # Get the attributes for URL/path construction
@@ -309,17 +342,16 @@ def _populate_sub_parser_by_class(
 
             # We need to get the object somehow
             if not issubclass(cls, gitlab.mixins.GetWithoutIdMixin):
-                if cls._id_attr is not None:
+                if cls._id_attr is not None and custom_action.requires_id:
                     id_attr = cls._id_attr.replace("_", "-")
                     sub_parser_action.add_argument(f"--{id_attr}", required=True)
 
-            required, optional, dummy = cli.custom_actions[name][action_name]
-            for x in required:
+            for x in custom_action.required:
                 if x != cls._id_attr:
                     sub_parser_action.add_argument(
                         f"--{x.replace('_', '-')}", required=True
                     )
-            for x in optional:
+            for x in custom_action.optional:
                 if x != cls._id_attr:
                     sub_parser_action.add_argument(
                         f"--{x.replace('_', '-')}", required=False
@@ -342,13 +374,13 @@ def _populate_sub_parser_by_class(
                     )
                 sub_parser_action.add_argument("--sudo", required=False)
 
-            required, optional, dummy = cli.custom_actions[name][action_name]
-            for x in required:
+            custom_action = cli.custom_actions[name][action_name]
+            for x in custom_action.required:
                 if x != cls._id_attr:
                     sub_parser_action.add_argument(
                         f"--{x.replace('_', '-')}", required=True
                     )
-            for x in optional:
+            for x in custom_action.optional:
                 if x != cls._id_attr:
                     sub_parser_action.add_argument(
                         f"--{x.replace('_', '-')}", required=False
@@ -374,8 +406,11 @@ def extend_parser(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 
     for cls in sorted(classes, key=operator.attrgetter("__name__")):
         arg_name = cli.cls_to_gitlab_resource(cls)
+        mgr_cls_name = f"{cls.__name__}Manager"
+        mgr_cls = getattr(gitlab.v4.objects, mgr_cls_name)
         object_group = subparsers.add_parser(
-            arg_name, formatter_class=cli.VerticalHelpFormatter
+            arg_name,
+            help=f"API endpoint: {mgr_cls._path}",
         )
 
         object_subparsers = object_group.add_subparsers(
@@ -403,8 +438,6 @@ def get_dict(
 class JSONPrinter:
     @staticmethod
     def display(d: Union[str, Dict[str, Any]], **_kwargs: Any) -> None:
-        import json  # noqa
-
         print(json.dumps(d))
 
     @staticmethod
@@ -413,8 +446,6 @@ class JSONPrinter:
         fields: List[str],
         **_kwargs: Any,
     ) -> None:
-        import json  # noqa
-
         print(json.dumps([get_dict(obj, fields) for obj in data]))
 
 

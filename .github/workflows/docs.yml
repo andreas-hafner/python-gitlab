@@ -20,11 +20,11 @@ env:
 
 jobs:
   sphinx:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.2.2
       - name: Set up Python
-        uses: actions/setup-python@v5.0.0
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.12"
       - name: Install dependencies
@@ -34,17 +34,17 @@ jobs:
           TOXENV: docs
         run: tox
       - name: Archive generated docs
-        uses: actions/upload-artifact@v4.3.1
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: html-docs
           path: build/sphinx/html/
 
   twine-check:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v4.2.2
       - name: Set up Python
-        uses: actions/setup-python@v5.0.0
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: "3.12"
       - name: Install dependencies

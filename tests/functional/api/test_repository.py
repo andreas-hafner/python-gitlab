@@ -49,6 +49,9 @@ def test_repository_files(project):
     raw_file = project.files.raw(file_path="README.rst", ref="main")
     assert os.fsdecode(raw_file) == "Initial content"
 
+    raw_file = project.files.raw(file_path="README.rst")
+    assert os.fsdecode(raw_file) == "Initial content"
+
 
 def test_repository_tree(project):
     tree = project.repository_tree()
@@ -158,10 +161,8 @@ def test_commit_discussion(project):
     note_from_get.body = "updated body"
     note_from_get.save()
     discussion = commit.discussions.get(discussion.id)
-    # assert discussion.attributes["notes"][-1]["body"] == "updated body"
+
     note_from_get.delete()
-    discussion = commit.discussions.get(discussion.id)
-    # assert len(discussion.attributes["notes"]) == 1
 
 
 def test_revert_commit(project):

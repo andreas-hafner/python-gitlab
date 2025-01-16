@@ -1,8 +1,8 @@
-############################
-Getting started with the API
-############################
+##################
+Using the REST API
+##################
 
-python-gitlab only supports GitLab API v4.
+python-gitlab currently only supports v4 of the GitLab REST API.
 
 ``gitlab.Gitlab`` class
 =======================
@@ -16,7 +16,7 @@ To connect to GitLab.com or another GitLab instance, create a ``gitlab.Gitlab`` 
    access token.
 
    For the full list of available options and how to obtain these tokens, please see
-   https://docs.gitlab.com/ee/api/index.html#authentication.
+   https://docs.gitlab.com/ee/api/rest/authentication.html.
 
 .. code-block:: python
 
@@ -161,6 +161,11 @@ with the GitLab server error message:
    >>> gl.projects.list(sort='invalid value')
    ...
    GitlabListError: 400: sort does not have a valid value
+
+.. _conflicting_parameters:
+
+Conflicting Parameters
+======================
 
 You can use the ``query_parameters`` argument to send arguments that would
 conflict with python or python-gitlab when using them as kwargs:
@@ -405,6 +410,27 @@ user. For example:
 .. code-block:: python
 
    p = gl.projects.create({'name': 'awesome_project'}, sudo='user1')
+
+.. warning::
+   When using ``sudo``, its usage is not remembered. If you use ``sudo`` to
+   retrieve an object and then later use ``save()`` to modify the object, it
+   will not use ``sudo``.  You should use ``save(sudo='user1')`` if you want to
+   perform subsequent actions as the  user.
+
+Updating with ``sudo``
+----------------------
+
+An example of how to ``get`` an object (using ``sudo``), modify the object, and
+then ``save`` the object (using ``sudo``):
+
+.. code-block:: python
+
+   group = gl.groups.get('example-group')
+   notification_setting = group.notificationsettings.get(sudo='user1')
+   notification_setting.level = gitlab.const.NOTIFICATION_LEVEL_GLOBAL
+   # Must use 'sudo' again when doing the save.
+   notification_setting.save(sudo='user1')
+
 
 Logging
 =======

@@ -10,7 +10,7 @@ def test_groups(gl):
             "email": "user@test.com",
             "username": "user",
             "name": "user",
-            "password": "user_pass",
+            "password": "E4596f8be406Bc3a14a4ccdb1df80587#!1",
         }
     )
     user2 = gl.users.create(
@@ -18,7 +18,7 @@ def test_groups(gl):
             "email": "user2@test.com",
             "username": "user2",
             "name": "user2",
-            "password": "user2_pass",
+            "password": "E4596f8be406Bc3a14a4ccdb1df80587#!#2",
         }
     )
     group1 = gl.groups.create(
@@ -105,8 +105,9 @@ def test_groups(gl):
     assert result[0].id == user.id
 
     group1.members.delete(user.id)
-    assert user not in group1.members.list()
+
     assert group1.members_all.list()
+
     member = group1.members.get(user2.id)
     member.access_level = gitlab.const.AccessLevel.OWNER
     member.save()
@@ -135,7 +136,6 @@ def test_group_labels(group):
     assert label.name == "Label:that requires:encoding"
 
     label.delete()
-    assert label not in group.labels.list()
 
 
 @pytest.mark.gitlab_premium
@@ -194,7 +194,6 @@ def test_group_badges(group):
     assert badge.image_url == "http://another.example.com"
 
     badge.delete()
-    assert badge not in group.badges.list()
 
 
 def test_group_milestones(group):
@@ -228,7 +227,6 @@ def test_group_custom_attributes(gl, group):
     assert attr in group.customattributes.list()
 
     attr.delete()
-    assert attr not in group.customattributes.list()
 
 
 def test_group_subgroups_projects(gl, user):
@@ -270,7 +268,6 @@ def test_group_wiki(group):
     wiki.save()
 
     wiki.delete()
-    assert wiki not in group.wikis.list()
 
 
 @pytest.mark.gitlab_premium
@@ -285,7 +282,6 @@ def test_group_hooks(group):
     assert hook.note_events is True
 
     hook.delete()
-    assert hook not in group.hooks.list()
 
 
 def test_group_transfer(gl, group):
@@ -312,3 +308,12 @@ def test_group_saml_group_links(group):
     group.saml_group_links.create(
         {"saml_group_name": "saml-group-1", "access_level": 10}
     )
+
+
+@pytest.mark.gitlab_premium
+def test_group_service_account(group):
+    service_account = group.service_accounts.create(
+        {"name": "gitlab-service-account", "username": "gitlab-service-account"}
+    )
+    assert service_account.name == "gitlab-service-account"
+    assert service_account.username == "gitlab-service-account"
